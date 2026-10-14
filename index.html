@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Car Call</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Car Call">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#10131c">
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="config.js"></script>
+<style>
+  :root { --bg1:#10131c; --bg2:#1b2140; --card:rgba(255,255,255,.07); --text:#f1f3f8; --muted:#a3abc2; --accent:#4f9cff; --ok:#3ecf8e; --bad:#ff5c5c; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; margin:0; }
+  body { background:linear-gradient(160deg,var(--bg1),var(--bg2)); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         display:flex; align-items:center; justify-content:center; padding:16px; padding-top:max(16px,env(safe-area-inset-top)); padding-bottom:max(16px,env(safe-area-inset-bottom)); }
+  .card { width:100%; max-width:420px; max-height:100%; overflow:auto; background:var(--card); border-radius:24px; padding:26px 22px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,.35); }
+  h1 { font-size:1.45rem; margin:0 0 6px; }
+  p { color:var(--muted); font-size:.95rem; line-height:1.45; margin:6px 0 16px; }
+  input[type=text],input[type=tel] { width:100%; padding:14px; border-radius:14px; border:1px solid rgba(255,255,255,.18); background:rgba(0,0,0,.25); color:var(--text); font-size:1rem; text-align:center; margin-bottom:10px; }
+  .btn { width:100%; border:0; border-radius:14px; padding:15px; font-size:1.05rem; font-weight:600; cursor:pointer; background:var(--accent); color:#fff; margin-top:8px; }
+  .btn.ghost { background:transparent; border:1px solid rgba(255,255,255,.25); color:var(--text); }
+  .btn.ok { background:var(--ok); color:#07210f; } .btn.bad { background:var(--bad); }
+  .btn:disabled { opacity:.5; }
+  .row { display:flex; gap:10px; } .row .btn { flex:1; }
+  a.tel { display:inline-block; margin-top:12px; color:var(--accent); font-weight:600; }
+  .hidden { display:none !important; }
+  .qr { display:inline-block; background:#fff; padding:14px; border-radius:16px; margin:6px 0 4px; } .qr img,.qr canvas { display:block; }
+  .pill { display:inline-flex; align-items:center; gap:8px; font-size:.95rem; color:var(--text); margin:8px 0; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.wait { background:#f5b942; animation:blink 1.2s infinite; } .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+  @keyframes blink { 50% { opacity:.3; } }
+  .note { font-size:.85rem; color:#f5b942; min-height:1.2em; margin:4px 0; }
+  .err { font-size:.9rem; color:var(--bad); min-height:1.2em; margin-top:8px; }
+
+  /* incoming call */
+  #vRing { background:transparent; box-shadow:none; }
+  .avatar { width:110px; height:110px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:2.6rem; font-weight:700; color:#fff; background:linear-gradient(135deg,#f472b6,#fb923c); margin:0 auto; }
+  #vRing .avatar { animation:pulse 1.2s infinite; }
+  @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(62,207,142,.5); } 100% { box-shadow:0 0 0 36px rgba(62,207,142,0); } }
+  .big { font-size:1.6rem; font-weight:700; margin:18px 0 2px; }
+
+  /* call stage */
+  #vCall { position:fixed; inset:0; background:#000; z-index:10; }
+  #remoteVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#000; }
+  #remoteVideo.off { opacity:0; }
+  .placeholder { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:linear-gradient(160deg,var(--bg1),var(--bg2)); }
+  .pname { margin-top:14px; font-weight:600; font-size:1.1rem; }
+  .topbar { position:absolute; top:0; left:0; right:0; padding:max(14px,env(safe-area-inset-top)) 16px 28px; background:linear-gradient(rgba(0,0,0,.55),transparent); display:flex; justify-content:space-between; align-items:center; }
+  .pip { position:absolute; right:14px; top:calc(max(14px,env(safe-area-inset-top)) + 46px); width:104px; height:146px; border-radius:14px; overflow:hidden; background:#222; border:1px solid rgba(255,255,255,.2); display:flex; align-items:center; justify-content:center; }
+  .pip video { width:100%; height:100%; object-fit:cover; } .pip video.mirror { transform:scaleX(-1); }
+  .controls { position:absolute; left:0; right:0; bottom:0; padding:28px 12px max(20px,env(safe-area-inset-bottom)); background:linear-gradient(transparent,rgba(0,0,0,.65)); display:flex; justify-content:center; gap:14px; }
+  .round { width:60px; height:60px; border-radius:50%; border:0; font-size:1.4rem; cursor:pointer; color:#fff; background:rgba(255,255,255,.2); }
+  .round.off { background:#fff; color:#111; } .round.hang { background:var(--bad); }
+  #tapHear { position:absolute; left:50%; transform:translateX(-50%); bottom:120px; width:auto; padding:12px 22px; }
+
+  /* printable sticker */
+  #sticker { display:none; }
+  @media print {
+    body > *:not(#sticker) { display:none !important; }
+    body { background:#fff; color:#000; display:block; padding:0; }
+    #sticker { display:flex !important; flex-direction:column; align-items:center; text-align:center; font-family:system-ui,sans-serif; padding:24px; }
+    #sticker h2 { font-size:30px; margin:0 0 4px; } #sticker p { color:#000; font-size:18px; margin:2px 0 14px; }
+    #sticker .qr { padding:0; margin:0; } #sticker .lbl { font-size:20px; font-weight:700; margin-top:12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Owner: first-time setup / edit -->
+<div id="vSetup" class="card hidden">
+  <h1>🚗 Set up your car sticker</h1>
+  <p>This creates a QR code for your vehicle. Anyone who scans it can call you.</p>
+  <input type="text" id="setName" placeholder="Name or plate, e.g. Rahul · KL 11 AB 1234" maxlength="40">
+  <input type="tel" id="setPhone" placeholder="Backup phone number (optional)" maxlength="20">
+  <p style="font-size:.8rem;margin-top:0">The phone number is shown to callers only if you are offline, so they can still reach you.</p>
+  <button class="btn" id="saveBtn">Save and show my QR</button>
+  <button class="btn ghost hidden" id="setBack">Back</button>
+</div>
+
+<!-- Owner: home -->
+<div id="vHome" class="card hidden">
+  <h1>Your car QR</h1>
+  <div class="qr" id="qr"></div>
+  <div class="pill"><span class="dot bad" id="onDot"></span><span id="onText">Offline</span></div>
+  <div class="note" id="homeNote"></div>
+  <button class="btn ok" id="goBtn">Go online to receive calls</button>
+  <p style="font-size:.82rem;margin:10px 0 4px">Keep this app open with the screen on (plug in the charger). Calls can only ring while it is open.</p>
+  <div class="row"><button class="btn ghost" id="printBtn">Print sticker</button><button class="btn ghost" id="editBtn">Edit details</button></div>
+  <button class="btn ghost" id="copyBtn">Copy caller link</button>
+</div>
+
+<!-- Owner: incoming call -->
+<div id="vRing" class="card hidden">
+  <div class="avatar" id="ringAv">?</div>
+  <div class="big" id="ringName">Someone</div>
+  <p>is calling about your car</p>
+  <div class="row"><button class="btn bad" id="declineBtn">Decline</button><button class="btn ok" id="ansVoice">Answer</button></div>
+  <button class="btn ghost" id="ansVideo">Answer with video</button>
+</div>
+
+<!-- Guest: landing -->
+<div id="vJoin" class="card hidden">
+  <h1>🚗 Call the car owner</h1>
+  <p id="ownerLbl">Tap below and the owner's phone will ring.</p>
+  <input type="text" id="guestName" placeholder="Your name or car (optional)" maxlength="25">
+  <button class="btn" id="dialVoice">📞 Call with voice</button>
+  <button class="btn ghost" id="dialVideo">🎥 Call with video</button>
+  <div class="err" id="joinErr"></div>
+  <a class="tel hidden" id="telLink">Call by phone instead</a>
+</div>
+
+<!-- In call -->
+<div id="vCall" class="hidden">
+  <video id="remoteVideo" class="off" autoplay playsinline></video>
+  <div class="placeholder" id="remotePh"><div class="avatar" id="avThem">?</div><div class="pname" id="nameThem">…</div></div>
+  <div class="topbar">
+    <div class="pill" style="margin:0"><span class="dot wait" id="callDot"></span><span id="callStatus">Connecting…</span></div>
+    <div id="timer">00:00</div>
+  </div>
+  <div class="pip"><video id="localVideo" class="mirror" autoplay muted playsinline></video></div>
+  <button class="btn hidden" id="tapHear">🔊 Tap to hear</button>
+  <div class="controls">
+    <button class="round" id="muteBtn" title="Mute">🎤</button>
+    <button class="round" id="camBtn" title="Camera">📷</button>
+    <button class="round" id="flipBtn" title="Switch camera">🔄</button>
+    <button class="round hang" id="hangBtn" title="Hang up">📵</button>
+  </div>
+</div>
+
+<!-- Guest: ended -->
+<div id="vEnd" class="card hidden">
+  <h1>Call ended</h1>
+  <p id="endInfo"></p>
+  <a class="tel hidden" id="telLink2">Call by phone instead</a>
+  <button class="btn" onclick="location.reload()">Call again</button>
+</div>
+
+<!-- Printable sticker (only visible when printing) -->
+<div id="sticker"><h2>Blocking my vehicle?</h2><p>Scan to call me. No app needed.</p><div class="qr" id="qrPrint"></div><div class="lbl" id="stickerLbl"></div></div>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const VIEWS = ['vSetup','vHome','vRing','vJoin','vCall','vEnd'];
+  const show = v => VIEWS.forEach(x => $(x).classList.toggle('hidden', x !== v));
+  const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };   // replaced from config.js
+  const qs = new URLSearchParams(location.search);
+  const targetId = location.hash.slice(1);          // present => this is a caller (guest)
+  const isGuest = !!targetId;
+  const guestPhone = qs.get('p') || '';
+
+  let me = null; try { me = JSON.parse(localStorage.getItem('carcall')); } catch (e) {}
+  const save = () => { try { localStorage.setItem('carcall', JSON.stringify(me)); } catch (e) {} };
+
+  let peer, call, dataConn, incoming, ringTimeout, ringTimer, ringCtx, wake, retryT;
+  let micStream, audioTrack, camTrack = null, blackTrack, sendStream, facing = 'user';
+  let callActive = false, started = false, wantOnline = false, timerId, secs = 0, noAnswer, lastNote = '';
+  const preview = new MediaStream();
+
+  /* ---------- media ---------- */
+  function makeBlackTrack() {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 16, 16);
+    return c.captureStream(1).getVideoTracks()[0];
+  }
+  const camC = f => ({ facingMode: { ideal: f }, width: { ideal: 480 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 30 } });
+  async function getMedia(wantCam) {
+    const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    micStream = null; camTrack = null;
+    if (wantCam) {
+      try { const s = await navigator.mediaDevices.getUserMedia({ audio, video: camC(facing) }); micStream = s; camTrack = s.getVideoTracks()[0]; } catch (e) {}
+    }
+    if (!micStream) micStream = await navigator.mediaDevices.getUserMedia({ audio });   // throws if mic denied
+    audioTrack = micStream.getAudioTracks()[0];
+    blackTrack = makeBlackTrack();
+    sendStream = new MediaStream([audioTrack, camTrack || blackTrack]);
+  }
+  function stopMedia() {
+    [micStream, preview, sendStream].forEach(s => { try { s && s.getTracks().forEach(t => t.stop()); } catch (e) {} });
+    try { camTrack && camTrack.stop(); } catch (e) {}
+    camTrack = null;
+  }
+  function refreshPreview() {
+    preview.getVideoTracks().forEach(t => preview.removeTrack(t));
+    if (camTrack) preview.addTrack(camTrack);
+    const lv = $('localVideo'); lv.srcObject = preview; lv.classList.toggle('mirror', facing === 'user');
+    $('camBtn').classList.toggle('off', !camTrack); $('camBtn').textContent = camTrack ? '📷' : '🚫';
+    $('flipBtn').classList.toggle('hidden', !camTrack);
+    if (camTrack) lv.play().catch(() => {});
+  }
+  async function swapVideo(track) {
+    const pc = call && call.peerConnection;
+    const s = pc && pc.getSenders().find(x => x.track && x.track.kind === 'video');
+    if (s) await s.replaceTrack(track);
+  }
+  function sendState() { if (dataConn && dataConn.open) dataConn.send({ mic: audioTrack ? audioTrack.enabled : true }); }
+
+  /* ---------- keep awake ---------- */
+  function keepAwake() { try { navigator.wakeLock && navigator.wakeLock.request('screen').then(w => wake = w).catch(() => {}); } catch (e) {} }
+
+  /* ---------- call screen ---------- */
+  function setName(n) { n = n || 'Caller'; $('nameThem').textContent = n; $('avThem').textContent = n[0].toUpperCase(); }
+  function setStatus(t, c) { $('callStatus').textContent = t; $('callDot').className = 'dot ' + c; }
+  function checkRemoteVideo() { const on = $('remoteVideo').videoWidth > 32; $('remoteVideo').classList.toggle('off', !on); $('remotePh').classList.toggle('hidden', on); }
+  function enterCall(name, status) {
+    show('vCall'); setName(name); setStatus(status, 'wait');
+    $('timer').textContent = '00:00'; secs = 0; started = false;
+    $('muteBtn').classList.remove('off'); $('muteBtn').textContent = '🎤';
+    $('remoteVideo').classList.add('off'); $('remotePh').classList.remove('hidden');
+    refreshPreview(); keepAwake();
+  }
+  function reattach(stream) { const v = $('remoteVideo'); v.srcObject = null; v.srcObject = stream; v.play().catch(() => $('tapHear').classList.remove('hidden')); }
+  function onRemote(stream) {
+    if (started) { reattach(stream); return; }
+    started = true; clearTimeout(noAnswer);
+    const v = $('remoteVideo'); v.srcObject = stream;
+    stream.addEventListener('addtrack', () => reattach(stream));
+    ['resize','loadedmetadata','playing'].forEach(ev => v.addEventListener(ev, checkRemoteVideo));
+    const poll = setInterval(() => callActive ? checkRemoteVideo() : clearInterval(poll), 1000);
+    v.play().catch(() => $('tapHear').classList.remove('hidden'));
+    setStatus('Connected', 'ok');
+    timerId = setInterval(() => { secs++; $('timer').textContent = String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0'); }, 1000);
+  }
+  function watch(c) {
+    const pc = c.peerConnection; if (!pc) return;
+    pc.oniceconnectionstatechange = () => {
+      const s = pc.iceConnectionState;
+      if (s === 'failed') setStatus('Connection failed. Add your own relay in config.js', 'bad');
+      else if (s === 'disconnected') setStatus('Connection lost…', 'bad');
+      else if (s === 'connected' || s === 'completed') {
+        if (started) setStatus('Connected', 'ok');
+        pc.getSenders().forEach(async snd => {            // cap video bitrate to keep mobile data low
+          if (snd.track && snd.track.kind === 'video') { try { const p = snd.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}]; p.encodings[0].maxBitrate = 500000; await snd.setParameters(p); } catch (e) {} }
+        });
+      }
+    };
+  }
+  function hookData(conn, onClose) {
+    dataConn = conn;
+    conn.on('close', onClose);
+  }
+  function telLinks() {
+    ['telLink','telLink2'].forEach(id => { const a = $(id); if (guestPhone) { a.href = 'tel:' + guestPhone; a.textContent = '📞 Call ' + guestPhone + ' instead'; a.classList.remove('hidden'); } });
+  }
+
+  /* ---------- end of call ---------- */
+  function endCall(msg) {
+    if (!callActive) return; callActive = false;
+    clearInterval(timerId); clearTimeout(noAnswer);
+    const dur = secs ? ' Duration ' + $('timer').textContent + '.' : '';
+    stopMedia();
+    try { call && call.close(); } catch (e) {}
+    try { dataConn && dataConn.close(); } catch (e) {}
+    call = dataConn = null; started = false;
+    $('remoteVideo').srcObject = null;
+    if (isGuest) {
+      try { peer && peer.destroy(); } catch (e) {}
+      try { wake && wake.release(); } catch (e) {}
+      $('endInfo').textContent = (msg || 'Call ended.') + dur; telLinks(); show('vEnd');
+    } else {
+      lastNote = (msg || 'Call ended.') + dur; renderHome();
+    }
+  }
+  $('hangBtn').onclick = () => endCall('You hung up.');
+  $('tapHear').onclick = () => { $('remoteVideo').play(); $('tapHear').classList.add('hidden'); };
+  $('muteBtn').onclick = () => {
+    audioTrack.enabled = !audioTrack.enabled;
+    $('muteBtn').classList.toggle('off', !audioTrack.enabled); $('muteBtn').textContent = audioTrack.enabled ? '🎤' : '🔇';
+  };
+  $('camBtn').onclick = async () => {
+    try {
+      if (camTrack) { camTrack.stop(); camTrack = null; await swapVideo(blackTrack); }
+      else { const s = await navigator.mediaDevices.getUserMedia({ video: camC(facing) }); camTrack = s.getVideoTracks()[0]; await swapVideo(camTrack); }
+    } catch (e) { setStatus('Could not access the camera', 'bad'); }
+    refreshPreview();
+  };
+  $('flipBtn').onclick = async () => {
+    if (!camTrack) return;
+    const next = facing === 'user' ? 'environment' : 'user';
+    try { camTrack.stop(); const s = await navigator.mediaDevices.getUserMedia({ video: camC(next) }); camTrack = s.getVideoTracks()[0]; facing = next; await swapVideo(camTrack); }
+    catch (e) { try { const s = await navigator.mediaDevices.getUserMedia({ video: camC(facing) }); camTrack = s.getVideoTracks()[0]; await swapVideo(camTrack); } catch (e2) { camTrack = null; await swapVideo(blackTrack); } }
+    refreshPreview();
+  };
+
+  /* =====================  OWNER  ===================== */
+  function rand() { const a = new Uint32Array(3); crypto.getRandomValues(a); return Array.from(a, n => n.toString(36)).join('').slice(0, 14); }
+  function callerUrl() {
+    const base = location.href.split('#')[0].split('?')[0];
+    const p = new URLSearchParams(); if (me.name) p.set('n', me.name); if (me.phone) p.set('p', me.phone);
+    const q = p.toString(); return base + (q ? '?' + q : '') + '#' + me.id;
+  }
+  function renderHome() {
+    show('vHome');
+    const url = callerUrl();
+    [['qr', 220], ['qrPrint', 300]].forEach(([id, size]) => { $(id).innerHTML = ''; new QRCode($(id), { text: url, width: size, height: size, correctLevel: QRCode.CorrectLevel.M }); });
+    $('stickerLbl').textContent = me.name || '';
+    $('homeNote').textContent = lastNote; lastNote = '';
+    $('copyBtn').onclick = () => navigator.clipboard.writeText(url).then(() => $('copyBtn').textContent = 'Copied ✓');
+    $('goBtn').classList.toggle('hidden', wantOnline);
+  }
+  function setOnline(cls, text) { $('onDot').className = 'dot ' + cls; $('onText').textContent = text; }
+
+  function initOwner() {
+    if (!me || !me.id) { $('setBack').classList.add('hidden'); show('vSetup'); } else renderHome();
+    $('saveBtn').onclick = () => {
+      me = { id: (me && me.id) || 'car-' + rand(), name: $('setName').value.trim(), phone: $('setPhone').value.trim() };
+      save(); renderHome();
+    };
+    $('editBtn').onclick = () => { $('setName').value = me.name || ''; $('setPhone').value = me.phone || ''; $('setBack').classList.remove('hidden'); show('vSetup'); };
+    $('setBack').onclick = renderHome;
+    $('printBtn').onclick = () => window.print();
+    $('goBtn').onclick = goOnline;
+    $('declineBtn').onclick = () => dropIncoming('You declined a call.');
+    $('ansVoice').onclick = () => accept(false);
+    $('ansVideo').onclick = () => accept(true);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wantOnline) { keepAwake(); try { ringCtx && ringCtx.resume(); } catch (e) {} ensurePeer(); } });
+    setInterval(() => wantOnline && ensurePeer(), 15000);
+  }
+
+  function goOnline() {                       // must run from a tap so the ringtone is allowed to play
+    try { ringCtx = new (window.AudioContext || window.webkitAudioContext)(); ringCtx.resume(); } catch (e) {}
+    wantOnline = true; $('goBtn').classList.add('hidden'); keepAwake(); startPeer();
+  }
+  function ensurePeer() {
+    if (!peer || peer.destroyed) startPeer();
+    else if (peer.disconnected) { try { peer.reconnect(); } catch (e) {} }
+  }
+  function retry() { clearTimeout(retryT); retryT = setTimeout(() => wantOnline && startPeer(), 4000); }
+
+  async function startPeer() {
+    setOnline('wait', 'Connecting…');
+    if (window.getIceConfig) { try { ICE.iceServers = (await getIceConfig()).iceServers; } catch (e) {} }
+    try { peer && peer.destroy(); } catch (e) {}
+    const p = new Peer(me.id, { config: ICE }); peer = p;
+    p.on('open', () => setOnline('ok', 'Online · ready for calls'));
+    p.on('disconnected', () => { if (p !== peer) return; setOnline('wait', 'Reconnecting…'); setTimeout(() => { try { !p.destroyed && p.reconnect(); } catch (e) {} }, 1500); });
+    p.on('close', () => { if (p === peer) { setOnline('bad', 'Offline. Retrying…'); retry(); } });
+    p.on('error', e => {
+      if (p !== peer || e.type === 'peer-unavailable') return;
+      setOnline('bad', e.type === 'unavailable-id' ? 'Old session still closing. Retrying…' : 'Offline (' + e.type + '). Retrying…'); retry();
+    });
+    p.on('call', onIncoming);
+    p.on('connection', conn => {
+      if (dataConn && dataConn.open) { conn.close(); return; }
+      hookData(conn, () => { if (incoming) dropIncoming('Missed call.'); else endCall('The caller hung up.'); });
+    });
+  }
+
+  function startRing() {
+    const beep = () => {
+      if (ringCtx) { try { ringCtx.resume(); } catch (e) {}
+        [0, .25].forEach(d => { const o = ringCtx.createOscillator(), g = ringCtx.createGain(); o.frequency.value = d ? 880 : 660; o.connect(g); g.connect(ringCtx.destination);
+          const t = ringCtx.currentTime + d; g.gain.setValueAtTime(.3, t); g.gain.exponentialRampToValueAtTime(.001, t + .22); o.start(t); o.stop(t + .25); }); }
+      navigator.vibrate && navigator.vibrate([300, 150, 300]);
+    };
+    beep(); ringTimer = setInterval(beep, 1800);
+  }
+  const stopRing = () => { clearInterval(ringTimer); ringTimer = null; };
+
+  function onIncoming(c) {
+    if (callActive || incoming) { c.close(); return; }          // already busy
+    incoming = c;
+    const nm = (c.metadata && c.metadata.name) || 'Someone';
+    $('ringName').textContent = nm; $('ringAv').textContent = nm[0].toUpperCase();
+    $('ansVideo').classList.toggle('hidden', false);
+    show('vRing'); startRing(); keepAwake();
+    ringTimeout = setTimeout(() => dropIncoming('Missed call from ' + nm + '.'), 45000);
+    c.on('close', () => { if (incoming === c) dropIncoming('Missed call from ' + nm + '.'); });
+  }
+  function dropIncoming(msg) {
+    stopRing(); clearTimeout(ringTimeout);
+    const c = incoming; incoming = null;
+    try { c && c.close(); } catch (e) {}
+    try { dataConn && dataConn.close(); } catch (e) {}
+    dataConn = null; lastNote = msg || ''; renderHome();
+  }
+  async function accept(withCam) {
+    const c = incoming; if (!c) return;
+    incoming = null; stopRing(); clearTimeout(ringTimeout);
+    try { await getMedia(withCam); } catch (e) { try { c.close(); } catch (x) {} lastNote = 'Microphone permission is needed to answer. Check Settings > Safari/Car Call.'; renderHome(); return; }
+    call = c; callActive = true;
+    enterCall((c.metadata && c.metadata.name) || 'Caller', 'Connecting…');
+    c.answer(sendStream); c.on('stream', onRemote); c.on('close', () => endCall('The caller hung up.')); watch(c);
+  }
+
+  /* =====================  GUEST  ===================== */
+  function initGuest() {
+    show('vJoin');
+    if (qs.get('n')) $('ownerLbl').textContent = 'Calling the owner of ' + qs.get('n') + '. Their phone will ring.';
+    if (guestPhone) { const a = $('telLink'); a.href = 'tel:' + guestPhone; a.textContent = '📞 Call ' + guestPhone + ' instead'; a.classList.remove('hidden'); }
+    $('dialVoice').onclick = () => dial(false);
+    $('dialVideo').onclick = () => dial(true);
+  }
+  function failJoin(msg) {
+    callActive = false; clearTimeout(noAnswer); stopMedia();
+    try { peer && peer.destroy(); } catch (e) {} peer = call = dataConn = null;
+    show('vJoin'); $('joinErr').textContent = msg; $('dialVoice').disabled = $('dialVideo').disabled = false;
+  }
+  async function dial(cam) {
+    const name = $('guestName').value.trim() || 'Someone';
+    $('joinErr').textContent = '';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('joinErr').textContent = 'Microphone not available. Open this link in Safari or Chrome over HTTPS.'; return; }
+    try { await getMedia(cam); } catch (e) { $('joinErr').textContent = 'Microphone permission is needed to call. Please allow it and try again.'; return; }
+    $('dialVoice').disabled = $('dialVideo').disabled = true;
+    if (window.getIceConfig) { try { ICE.iceServers = (await getIceConfig()).iceServers; } catch (e) {} }
+    peer = new Peer({ config: ICE });
+    const closeMsg = () => started ? 'The owner ended the call.' : 'The owner is busy or could not answer.';
+    peer.on('error', e => {
+      if (e.type === 'peer-unavailable') failJoin('The owner is not online right now. Please try again in a minute' + (guestPhone ? ' or use the phone number below.' : '.'));
+      else if (!started) failJoin('Could not connect (' + e.type + '). Check your internet and try again.');
+    });
+    peer.on('open', () => {
+      hookData(peer.connect(targetId), () => endCall(closeMsg()));
+      call = peer.call(targetId, sendStream, { metadata: { name, video: !!camTrack } });
+      callActive = true;
+      call.on('stream', onRemote); call.on('close', () => endCall(closeMsg()));
+      enterCall('Car owner', 'Calling… waiting for answer'); watch(call);
+      noAnswer = setTimeout(() => { if (!started) endCall('No answer. The owner may be away from their phone.'); }, 50000);
+    });
+  }
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  isGuest ? initGuest() : initOwner();
+  window.addEventListener('pagehide', () => { if (isGuest) try { peer && peer.destroy(); } catch (e) {} });
+})();
+</script>
+</body>
+</html>
