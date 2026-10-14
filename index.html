@@ -90,8 +90,9 @@
   <div class="qr" id="qr"></div>
   <div class="pill"><span class="dot bad" id="onDot"></span><span id="onText">Offline</span></div>
   <div class="note" id="homeNote"></div>
-  <button class="btn ok" id="goBtn">Go online to receive calls</button>
-  <p style="font-size:.82rem;margin:10px 0 4px">Keep this app open with the screen on (plug in the charger). Calls can only ring while it is open.</p>
+  <div class="pill" style="margin:0"><span id="alertText"></span></div>
+  <button class="btn ok hidden" id="alertBtn">🔔 Enable call alerts</button>
+  <p style="font-size:.82rem;margin:10px 0 4px" id="homeHint"></p>
   <div class="row"><button class="btn ghost" id="printBtn">Print sticker</button><button class="btn ghost" id="editBtn">Edit details</button></div>
   <button class="btn ghost" id="copyBtn">Copy caller link</button>
 </div>
@@ -159,7 +160,7 @@
   let me = null; try { me = JSON.parse(localStorage.getItem('carcall')); } catch (e) {}
   const save = () => { try { localStorage.setItem('carcall', JSON.stringify(me)); } catch (e) {} };
 
-  let peer, call, dataConn, incoming, ringTimeout, ringTimer, ringCtx, wake, retryT;
+  let retryDial, peer, call, dataConn, incoming, ringTimeout, ringTimer, ringCtx, wake, retryT;
   let micStream, audioTrack, camTrack = null, blackTrack, sendStream, facing = 'user';
   let callActive = false, started = false, wantOnline = false, timerId, secs = 0, noAnswer, lastNote = '';
   const preview = new MediaStream();
@@ -244,7 +245,7 @@
   }
   function hookData(conn, onClose) {
     dataConn = conn;
-    conn.on('close', onClose);
+    conn.on('close', () => { if (dataConn === conn) onClose(); });
   }
   function telLinks() {
     ['telLink','telLink2'].forEach(id => { const a = $(id); if (guestPhone) { a.href = 'tel:' + guestPhone; a.textContent = '📞 Call ' + guestPhone + ' instead'; a.classList.remove('hidden'); } });
@@ -253,7 +254,7 @@
   /* ---------- end of call ---------- */
   function endCall(msg) {
     if (!callActive) return; callActive = false;
-    clearInterval(timerId); clearTimeout(noAnswer);
+    clearInterval(timerId); clearTimeout(noAnswer); clearTimeout(retryDial); retryDial = null;
     const dur = secs ? ' Duration ' + $('timer').textContent + '.' : '';
     stopMedia();
     try { call && call.close(); } catch (e) {}
@@ -289,6 +290,39 @@
     refreshPreview();
   };
 
+  /* ---------- push alerts ---------- */
+  const PUSH = ((window.CALL_CONFIG && CALL_CONFIG.pushServer) || '').replace(/\/$/, '');
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const b64uToU8 = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); const b = atob(s + '='.repeat((4 - s.length % 4) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+  let pushOn = false;
+  function updateAlertUI() {
+    let txt = '', btn = false, hint = 'Keep this app open to receive calls.';
+    if (!PUSH) txt = 'Call alerts are not set up yet (pushServer in config.js)';
+    else if (!pushSupported) txt = /iPhone|iPad/.test(navigator.userAgent) && !standalone ? 'Open Car Call from the Home Screen icon to turn on alerts' : 'Alerts are not supported in this browser';
+    else if (pushOn) { txt = '🔔 Call alerts on'; hint = 'When someone scans your code you get a notification. Tap it to answer.'; }
+    else if (Notification.permission === 'denied') txt = 'Alerts blocked. Allow notifications for Car Call in iPhone Settings';
+    else { txt = '🔕 Call alerts off'; btn = true; }
+    $('alertText').textContent = txt; $('alertBtn').classList.toggle('hidden', !btn); $('homeHint').textContent = hint;
+  }
+  async function syncPush(interactive) {
+    if (!PUSH || !pushSupported) return updateAlertUI();
+    try {
+      if (Notification.permission !== 'granted') {
+        if (!interactive || await Notification.requestPermission() !== 'granted') return updateAlertUI();
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const key = (await (await fetch(PUSH + '/vapid')).json()).key;
+      let sub = await reg.pushManager.getSubscription();
+      if (sub && me.vapid !== key) { await sub.unsubscribe(); sub = null; }
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToU8(key) });
+      const r = await fetch(PUSH + '/subscribe', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ id: me.id, secret: me.secret, sub: sub.toJSON() }) });
+      if (!r.ok) throw new Error('server said ' + r.status);
+      me.vapid = key; save(); pushOn = true;
+    } catch (e) { pushOn = false; $('homeNote').textContent = 'Could not turn on alerts: ' + ((e && e.message) || e); }
+    updateAlertUI();
+  }
+
   /* =====================  OWNER  ===================== */
   function rand() { const a = new Uint32Array(3); crypto.getRandomValues(a); return Array.from(a, n => n.toString(36)).join('').slice(0, 14); }
   function callerUrl() {
@@ -303,20 +337,22 @@
     $('stickerLbl').textContent = me.name || '';
     $('homeNote').textContent = lastNote; lastNote = '';
     $('copyBtn').onclick = () => navigator.clipboard.writeText(url).then(() => $('copyBtn').textContent = 'Copied ✓');
-    $('goBtn').classList.toggle('hidden', wantOnline);
+    updateAlertUI();
   }
   function setOnline(cls, text) { $('onDot').className = 'dot ' + cls; $('onText').textContent = text; }
 
   function initOwner() {
-    if (!me || !me.id) { $('setBack').classList.add('hidden'); show('vSetup'); } else renderHome();
+    if (me && me.id && !me.secret) { me.secret = rand() + rand(); save(); }
+    if (!me || !me.id) { $('setBack').classList.add('hidden'); show('vSetup'); } else { renderHome(); begin(); }
     $('saveBtn').onclick = () => {
-      me = { id: (me && me.id) || 'car-' + rand(), name: $('setName').value.trim(), phone: $('setPhone').value.trim() };
-      save(); renderHome();
+      me = Object.assign({}, me, { id: (me && me.id) || 'car-' + rand(), secret: (me && me.secret) || rand() + rand(), name: $('setName').value.trim(), phone: $('setPhone').value.trim() });
+      save(); renderHome(); begin();
     };
     $('editBtn').onclick = () => { $('setName').value = me.name || ''; $('setPhone').value = me.phone || ''; $('setBack').classList.remove('hidden'); show('vSetup'); };
     $('setBack').onclick = renderHome;
     $('printBtn').onclick = () => window.print();
-    $('goBtn').onclick = goOnline;
+    $('alertBtn').onclick = () => syncPush(true);
+    document.addEventListener('pointerdown', () => { try { ringCtx = ringCtx || new (window.AudioContext || window.webkitAudioContext)(); ringCtx.resume(); } catch (e) {} }, { once: true });   // unlocks the ringtone
     $('declineBtn').onclick = () => dropIncoming('You declined a call.');
     $('ansVoice').onclick = () => accept(false);
     $('ansVideo').onclick = () => accept(true);
@@ -324,9 +360,9 @@
     setInterval(() => wantOnline && ensurePeer(), 15000);
   }
 
-  function goOnline() {                       // must run from a tap so the ringtone is allowed to play
-    try { ringCtx = new (window.AudioContext || window.webkitAudioContext)(); ringCtx.resume(); } catch (e) {}
-    wantOnline = true; $('goBtn').classList.add('hidden'); keepAwake(); startPeer();
+  function begin() {                          // go online as soon as the app opens
+    if (wantOnline) return;
+    wantOnline = true; keepAwake(); startPeer(); syncPush(false);
   }
   function ensurePeer() {
     if (!peer || peer.destroyed) startPeer();
@@ -399,7 +435,7 @@
     $('dialVideo').onclick = () => dial(true);
   }
   function failJoin(msg) {
-    callActive = false; clearTimeout(noAnswer); stopMedia();
+    callActive = false; clearTimeout(noAnswer); clearTimeout(retryDial); retryDial = null; stopMedia();
     try { peer && peer.destroy(); } catch (e) {} peer = call = dataConn = null;
     show('vJoin'); $('joinErr').textContent = msg; $('dialVoice').disabled = $('dialVideo').disabled = false;
   }
@@ -412,16 +448,35 @@
     if (window.getIceConfig) { try { ICE.iceServers = (await getIceConfig()).iceServers; } catch (e) {} }
     peer = new Peer({ config: ICE });
     const closeMsg = () => started ? 'The owner ended the call.' : 'The owner is busy or could not answer.';
-    peer.on('error', e => {
-      if (e.type === 'peer-unavailable') failJoin('The owner is not online right now. Please try again in a minute' + (guestPhone ? ' or use the phone number below.' : '.'));
-      else if (!started) failJoin('Could not connect (' + e.type + '). Check your internet and try again.');
+    const offlineMsg = 'The owner is not online right now. Please try again in a minute' + (guestPhone ? ' or use the phone number below.' : '.');
+    let rung = false, deadline = Infinity;
+    const connectOnce = () => {
+      try { dataConn && dataConn.close(); } catch (e) {}
+      const c = peer.call(targetId, sendStream, { metadata: { name, video: !!camTrack } }); call = c;
+      c.on('stream', onRemote); c.on('close', () => { if (call === c) endCall(closeMsg()); }); watch(c);
+      hookData(peer.connect(targetId), () => endCall(closeMsg()));
+    };
+    peer.on('error', async e => {
+      if (started) return;
+      if (e.type !== 'peer-unavailable') return failJoin('Could not connect (' + e.type + '). Check your internet and try again.');
+      if (retryDial) return;
+      if (!rung) {                               // owner is offline: send them a push notification, then keep trying
+        rung = true;
+        if (!PUSH) return failJoin(offlineMsg);
+        setStatus('Owner is offline. Sending a notification…', 'wait');
+        let ok = false;
+        try { const r = await fetch(PUSH + '/ring', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ id: targetId }) }); ok = (await r.json()).ok; } catch (x) {}
+        if (!ok) return failJoin(offlineMsg);
+        deadline = Date.now() + 80000;
+        setStatus('Owner notified. Waiting for them to open the app…', 'wait');
+        clearTimeout(noAnswer); noAnswer = setTimeout(() => { if (!started) endCall('No answer. The owner did not open the app in time.'); }, 90000);
+      } else if (Date.now() > deadline) return failJoin('The owner did not open the app in time' + (guestPhone ? '. Try the phone number below.' : '.'));
+      if (!retryDial) retryDial = setTimeout(() => { retryDial = null; if (callActive && !started) connectOnce(); }, 3000);
     });
     peer.on('open', () => {
-      hookData(peer.connect(targetId), () => endCall(closeMsg()));
-      call = peer.call(targetId, sendStream, { metadata: { name, video: !!camTrack } });
       callActive = true;
-      call.on('stream', onRemote); call.on('close', () => endCall(closeMsg()));
-      enterCall('Car owner', 'Calling… waiting for answer'); watch(call);
+      enterCall('Car owner', 'Calling… waiting for answer');
+      connectOnce();
       noAnswer = setTimeout(() => { if (!started) endCall('No answer. The owner may be away from their phone.'); }, 50000);
     });
   }
