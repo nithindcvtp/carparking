@@ -16,7 +16,10 @@ window.CALL_CONFIG = {
   // OPTION B: a fixed username and password created in the Metered dashboard
   // (Credentials -> Add Credential).
   turnUsername: '',
-  turnPassword: ''
+  turnPassword: '',
+
+  // Car Call push alerts: the address of your Cloudflare Worker (see worker.js), no trailing slash.
+  pushServer: ''       // e.g. 'https://carcall.yourname.workers.dev'
 };
 
 window.getIceConfig = async function () {
